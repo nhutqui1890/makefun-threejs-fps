@@ -7,6 +7,7 @@ import { GRENADE } from './weapons.js';
 import { PALETTE } from './palette.js';
 
 const TRACER_POOL = 24;
+const TRACER_LIFE = 0.3;
 const PUFF_POOL = 40;
 
 export function createCombat(scene, world) {
@@ -24,15 +25,21 @@ export function createCombat(scene, world) {
   proxyHead.userData.part = 'head';
   scene.add(proxyBody, proxyHead);
 
-  // Tracer pool: fading lines from muzzle to impact.
+  // Tracer pool: glowing rods from muzzle to impact. A 1 px line is invisible
+  // in a screenshot; a thin additive box reads as a beam of light, and a solid
+  // white-hot core inside it keeps the beam visible against bright sand, where
+  // additive light alone washes out.
   const tracers = [];
+  const tracerGeo = new THREE.BoxGeometry(1, 1, 1);
   for (let i = 0; i < TRACER_POOL; i++) {
-    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
-    const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: new THREE.Color('#ffd27a'), transparent: true, opacity: 0 }));
-    line.visible = false;
-    line.frustumCulled = false;
-    scene.add(line);
-    tracers.push({ line, life: 0 });
+    const glow = new THREE.Mesh(tracerGeo, new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffd27a'), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const core = new THREE.Mesh(tracerGeo, new THREE.MeshBasicMaterial({ color: new THREE.Color('#fff6dd'), transparent: true, opacity: 0, depthWrite: false }));
+    glow.visible = false;
+    core.visible = false;
+    glow.frustumCulled = false;
+    core.frustumCulled = false;
+    scene.add(glow, core);
+    tracers.push({ glow, core, life: 0 });
   }
   let tracerCursor = 0;
 
@@ -51,20 +58,30 @@ export function createCombat(scene, world) {
   scene.add(explosionLight);
   let explosionFlash = 0;
 
+  // One light reused for every impact flash: it sits at the latest hit point
+  // and dies within a tenth of a second, so a firefight strobes faintly.
+  const sparkLight = new THREE.PointLight(new THREE.Color('#ffd27a'), 0, 8);
+  scene.add(sparkLight);
+  let sparkFlash = 0;
+
   const grenades = [];
   const grenadeGeo = new THREE.SphereGeometry(0.09, 10, 8);
   const grenadeMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.metal), roughness: 0.4, metalness: 0.7 });
 
+  const tmpMid = new THREE.Vector3();
   function spawnTracer(from, to) {
     const tracer = tracers[tracerCursor];
     tracerCursor = (tracerCursor + 1) % TRACER_POOL;
-    const positions = tracer.line.geometry.attributes.position;
-    positions.setXYZ(0, from.x, from.y, from.z);
-    positions.setXYZ(1, to.x, to.y, to.z);
-    positions.needsUpdate = true;
-    tracer.line.material.opacity = 0.85;
-    tracer.line.visible = true;
-    tracer.life = 0.09;
+    tmpMid.copy(from).add(to).multiplyScalar(0.5);
+    const length = Math.max(0.01, from.distanceTo(to));
+    for (const [mesh, width, opacity] of [[tracer.glow, 0.05, 0.85], [tracer.core, 0.02, 0.95]]) {
+      mesh.position.copy(tmpMid);
+      mesh.lookAt(to);
+      mesh.scale.set(width, width, length);
+      mesh.material.opacity = opacity;
+      mesh.visible = true;
+    }
+    tracer.life = TRACER_LIFE;
   }
 
   function spawnPuff(point, normal, color) {
@@ -85,7 +102,27 @@ export function createCombat(scene, world) {
     }
   }
 
-  // Fire one hitscan round. actors: every fighter (bots and the player proxy).
+  // Bright sparks on a fighter hit: pale-gold shards that fly faster and die
+  // sooner than the dust puffs, plus the spark light at the impact point.
+  function spawnSparks(point) {
+    for (let i = 0; i < 3; i++) {
+      const puff = puffs[puffCursor];
+      puffCursor = (puffCursor + 1) % PUFF_POOL;
+      puff.mesh.position.copy(point);
+      puff.mesh.material.color.set('#ffe9a8');
+      puff.mesh.material.opacity = 1;
+      puff.mesh.visible = true;
+      puff.mesh.scale.setScalar(1.5);
+      puff.velocity.set(
+        (Math.random() - 0.5) * 4,
+        Math.random() * 3,
+        (Math.random() - 0.5) * 4,
+      );
+      puff.life = 0.22 + Math.random() * 0.1;
+    }
+    sparkLight.position.copy(point);
+    sparkFlash = 1;
+  }
   // Returns the damage dealt, or 0. onHit(actor, damage, part, killed) is called
   // for a fighter hit; onSurface(point) for a world hit.
   function shootFrom(origin, direction, shooter, def, actors, onHit, onSurface) {
@@ -117,10 +154,13 @@ export function createCombat(scene, world) {
       if (part === 'head') damage *= def.headMult;
       damage = Math.round(damage);
       spawnPuff(hit.point, hit.face ? hit.face.normal : tmpDir, '#c23b2e');
+      spawnSparks(hit.point);
       onHit(victim, damage, part);
       return damage;
     }
     spawnPuff(hit.point, hit.face ? hit.face.normal : tmpDir, PALETTE.sand);
+    sparkLight.position.copy(hit.point);
+    sparkFlash = 0.6;
     if (onSurface) onSurface(hit.point);
     return 0;
   }
@@ -137,11 +177,18 @@ export function createCombat(scene, world) {
   function step(dt, actors, onDamage, onExplode) {
     explosionFlash = Math.max(0, explosionFlash - dt * 3);
     explosionLight.intensity = explosionFlash * 60;
+    sparkFlash = Math.max(0, sparkFlash - dt * 8);
+    sparkLight.intensity = sparkFlash * 14;
     for (const tracer of tracers) {
       if (tracer.life <= 0) continue;
       tracer.life -= dt;
-      tracer.line.material.opacity = Math.max(0, tracer.life / 0.09) * 0.85;
-      if (tracer.life <= 0) tracer.line.visible = false;
+      const ratio = Math.max(0, tracer.life / TRACER_LIFE);
+      tracer.glow.material.opacity = ratio * 0.85;
+      tracer.core.material.opacity = ratio * 0.95;
+      if (tracer.life <= 0) {
+        tracer.glow.visible = false;
+        tracer.core.visible = false;
+      }
     }
     for (const puff of puffs) {
       if (puff.life <= 0) continue;

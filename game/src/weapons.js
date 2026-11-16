@@ -43,14 +43,22 @@ const VIEW = {
 };
 
 export function createWeaponRig(camera) {
-  const bodyMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#6e6a63'), roughness: 0.45, metalness: 0.4 });
-  const gripMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.hairline), roughness: 0.7, metalness: 0.2 });
+  const bodyMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#8a857e'), roughness: 0.45, metalness: 0.4 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#4c4741'), roughness: 0.6, metalness: 0.35 });
+  const gripMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#5a5348'), roughness: 0.7, metalness: 0.2 });
   const accentMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(PALETTE.accent), roughness: 0.5, metalness: 0.3 });
 
+  // The view model sits low and right, small enough to see past: the original
+  // sat so close to the camera it filled a third of the frame.
+  const VIEW_POS = new THREE.Vector3(0.28, -0.25, -0.55);
+  const VIEW_SCALE = 0.62;
   const model = new THREE.Group();
-  model.position.set(0.26, -0.22, -0.45);
-  model.scale.setScalar(0.8);
+  model.position.copy(VIEW_POS);
+  model.scale.setScalar(VIEW_SCALE);
   camera.add(model);
+  // A dim warm fill on the camera so the gun reads as metal, not a black slab.
+  const viewLight = new THREE.PointLight(new THREE.Color('#ffe0b3'), 4, 5);
+  camera.add(viewLight);
   const parts = {};
   function part(name, mat) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
@@ -60,14 +68,51 @@ export function createWeaponRig(camera) {
     return mesh;
   }
   part('receiver', bodyMat);
-  part('barrel', gripMat);
+  part('barrel', darkMat);
   part('stock', gripMat);
   part('grip', gripMat);
   part('sight', accentMat);
 
+  // The muzzle flash is a painted starburst, not a flat quad: a white-hot core,
+  // amber spikes and a soft halo, drawn once on a canvas at load.
+  function flashTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    const cx = 64;
+    const cy = 64;
+    const halo = ctx.createRadialGradient(cx, cy, 0, cx, cy, 62);
+    halo.addColorStop(0, 'rgba(255,244,214,1)');
+    halo.addColorStop(0.25, 'rgba(255,205,110,0.9)');
+    halo.addColorStop(0.6, 'rgba(255,150,60,0.35)');
+    halo.addColorStop(1, 'rgba(255,120,40,0)');
+    ctx.fillStyle = halo;
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillStyle = 'rgba(255,226,150,0.95)';
+    for (let i = 0; i < 4; i++) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate((i * Math.PI) / 2 + Math.PI / 4);
+      ctx.beginPath();
+      ctx.moveTo(0, -58);
+      ctx.lineTo(7, -8);
+      ctx.lineTo(-7, -8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.fillStyle = 'rgba(255,255,240,1)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+    ctx.fill();
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
   const flash = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.15, 0.15),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffd27a'), transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }),
+    new THREE.PlaneGeometry(0.24, 0.24),
+    new THREE.MeshBasicMaterial({ map: flashTexture(), transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }),
   );
   flash.visible = false;
   camera.add(flash);
@@ -101,9 +146,10 @@ export function createWeaponRig(camera) {
     set('stock', spec.stock, 0, -0.02, spec.receiver[2] / 2 + (spec.stock[2] || 0) / 2);
     set('grip', spec.grip, 0, -spec.receiver[1] / 2 - spec.grip[1] / 2 + 0.03, 0.08);
     set('sight', [0.02, 0.05, 0.1], 0, spec.receiver[1] / 2 + 0.025, -0.05);
+    // The muzzle sits at the model's local muzzleZ, scaled into camera space.
     const muzzleZ = -spec.receiver[2] / 2 - spec.barrel[2] + 0.02;
-    flash.position.set(0.26, -0.19, -0.45 + muzzleZ);
-    flashLight.position.set(0.26, -0.16, -0.45 + muzzleZ * 0.6);
+    flash.position.set(VIEW_POS.x, VIEW_POS.y + 0.03, VIEW_POS.z + muzzleZ * VIEW_SCALE);
+    flashLight.position.set(VIEW_POS.x, VIEW_POS.y + 0.03, VIEW_POS.z + muzzleZ * 0.6 * VIEW_SCALE);
   }
 
   function currentDef() {
@@ -115,7 +161,7 @@ export function createWeaponRig(camera) {
     state.flash = Math.max(0, state.flash - dt);
     state.switchLeft = Math.max(0, state.switchLeft - dt);
     state.kick += (0 - state.kick) * Math.min(1, dt * 13);
-    model.position.z = -0.45 + state.kick;
+    model.position.z = VIEW_POS.z + state.kick;
     model.rotation.x = state.kick * 2.4;
     flash.visible = state.flash > 0;
     if (state.flash > 0) flash.rotation.z = state.flash * 40;

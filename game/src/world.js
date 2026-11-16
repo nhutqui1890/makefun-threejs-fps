@@ -218,9 +218,9 @@ export function createWorld(scene) {
   sun.shadow.camera.far = 90;
   sun.shadow.bias = -0.0005;
   scene.add(sun, sun.target);
-  const hemi = new THREE.HemisphereLight(new THREE.Color('#8a7a68'), new THREE.Color('#3a2f24'), 1.25);
+  const hemi = new THREE.HemisphereLight(new THREE.Color('#8a7a68'), new THREE.Color('#3a2f24'), 1.55);
   scene.add(hemi);
-  const fill = new THREE.DirectionalLight(new THREE.Color('#7a86a8'), 0.5);
+  const fill = new THREE.DirectionalLight(new THREE.Color('#7a86a8'), 0.7);
   fill.position.set(-20, 14, 20);
   scene.add(fill);
 

@@ -97,6 +97,9 @@ export function createHud() {
       setText(els.health, 'health', String(Math.max(0, Math.ceil(health))));
       setText(els.armor, 'armor', String(Math.max(0, Math.ceil(armor))));
       els.health.parentElement.classList.toggle('low', health <= 30);
+      // Below 30 HP the red vignette stays on until healed: a hurt player
+      // should feel hurt, not just flash once.
+      els.damage.classList.toggle('lowhp', health > 0 && health <= 30);
     },
     setAmmo(mag, reserve, weaponName, grenades) {
       setText(els.ammoMag, 'mag', String(mag));
@@ -122,13 +125,15 @@ export function createHud() {
     setCrosshairSpread(px) {
       els.crosshair.style.setProperty('--gap', `${px.toFixed(1)}px`);
     },
-    hitmarker(kill) {
+    hitmarker(kill, hold) {
       els.hitmarker.classList.add('on');
       els.hitmarker.classList.toggle('kill', kill);
       clearTimeout(hitTimer);
-      hitTimer = setTimeout(() => els.hitmarker.classList.remove('on', 'kill'), kill ? 220 : 110);
+      // hold: the marker stays up until the next hitmarker call. Only the
+      // screenshot staging uses it, to freeze a hit on screen.
+      if (!hold) hitTimer = setTimeout(() => els.hitmarker.classList.remove('on', 'kill'), kill ? 220 : 110);
     },
-    killfeed(killer, victim, killerTeam, headshot) {
+    killfeed(killer, victim, killerTeam, headshot, hold) {
       const line = document.createElement('div');
       line.className = 'feed-line';
       const killerSpan = `<span class="feed-${killerTeam}">${killer}</span>`;
@@ -136,14 +141,20 @@ export function createHud() {
       line.innerHTML = `${killerSpan} <span class="feed-weapon">${headshot ? '◎' : '—'}</span> ${victimSpan}`;
       els.killfeed.prepend(line);
       while (els.killfeed.children.length > 5) els.killfeed.removeChild(els.killfeed.lastChild);
-      setTimeout(() => line.remove(), 6000);
+      // hold: the line stays until cleared. Only the screenshot staging uses
+      // it — a software-rendered capture can take longer than the 6 s a live
+      // feed line lives, and the shot would lose it.
+      if (!hold) setTimeout(() => line.remove(), 6000);
     },
-    banner(text, sub, team) {
+    clearKillfeed() {
+      els.killfeed.innerHTML = '';
+    },
+    banner(text, sub, team, hold) {
       els.bannerText.textContent = text;
       els.bannerSub.textContent = sub || '';
       els.banner.className = `show ${team || ''}`;
       clearTimeout(bannerTimer);
-      bannerTimer = setTimeout(() => els.banner.classList.remove('show'), 3200);
+      if (!hold) bannerTimer = setTimeout(() => els.banner.classList.remove('show'), 3200);
     },
     message(text, ms = 2600) {
       els.message.textContent = text;
